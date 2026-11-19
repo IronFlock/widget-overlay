@@ -1,8 +1,8 @@
 import { html, css, LitElement, nothing } from 'lit'
 import { property, query, state } from 'lit/decorators.js'
 import { styleMap } from 'lit/directives/style-map.js'
-import { unsafeSVG } from 'lit/directives/unsafe-svg.js'
 import { ImageOverlayConfiguration, Overlays } from './definition-schema.js'
+import { ImageSource, SvgSerializer, imageSource } from './image-source.js'
 import { repeat } from 'lit/directives/repeat.js'
 import './linear-progress.js'
 
@@ -37,6 +37,19 @@ const fractionDigits = (precision: number): number => Math.min(100, Math.floor(p
 const objects = <T>(list: unknown): T[] =>
     Array.isArray(list) ? list.filter((item) => !!item && typeof item === 'object') : []
 
+// Inline SVG markup is drawn as an image, never inserted into the widget's DOM.
+// It is parsed in a document of its own that DOMParser creates without scripting
+// or loading, so markup the HTML parser accepts (no xmlns, unquoted attributes)
+// becomes well-formed SVG XML for the <img>. Drawn in place, its text inherited
+// the widget's sans-serif font; an image inherits nothing, so the root gets that
+// font as its default (any font the SVG sets itself still wins).
+const serializeSvg: SvgSerializer = (markup) => {
+    const svg = new DOMParser().parseFromString(markup, 'text/html').querySelector('svg')
+    if (!svg) return undefined
+    if (!svg.hasAttribute('font-family')) svg.setAttribute('font-family', 'sans-serif')
+    return { xml: new XMLSerializer().serializeToString(svg), viewBox: svg.getAttribute('viewBox') }
+}
+
 export class WidgetOverlay extends LitElement {
     @property({ type: Object })
     inputData?: ImageOverlayConfiguration
@@ -46,8 +59,7 @@ export class WidgetOverlay extends LitElement {
 
     @state() private themeTitleColor?: string
     @state() private themeSubtitleColor?: string
-    @state() private previewUrl?: string
-    @state() private inlineSvg?: string
+    @state() private image?: ImageSource
 
     @state() private modifier?: Modifier
 
@@ -95,59 +107,7 @@ export class WidgetOverlay extends LitElement {
     }
 
     transform() {
-        this.inlineSvg = undefined
-        // json2ts types the custom `image` type as an empty interface; it holds a string.
-        const image: unknown = this.inputData?.image
-        if (!image || typeof image !== 'string') {
-            this.previewUrl = undefined
-            return
-        }
-        const raw = image.trim()
-
-        // Inline SVG markup (optionally starting with an XML declaration or other preamble)
-        const trimmed = raw.replace(/^\uFEFF/, '').trimStart()
-
-        // Find the actual <svg ...>...</svg> block even if preceded by <?xml ...?> or <!DOCTYPE ...>
-        const svgBlockMatch = trimmed.match(/<svg[\s\S]*?<\/svg>/i)
-
-        if (svgBlockMatch) {
-            this.inlineSvg = svgBlockMatch[0].trim()
-            this.previewUrl = undefined
-            return
-        }
-
-        // Full data URL (already encoded)
-        if (/^data:image\/svg\+xml[,;]/.test(raw)) {
-            // It's an SVG data URL; we could theoretically decode, but safer to keep as src
-            this.previewUrl = raw
-            return
-        }
-        if (/^data:image\/[a-zA-Z.+-]+;base64,/.test(raw)) {
-            this.previewUrl = raw
-            return
-        }
-
-        // Bare base64 string (heuristic)
-        if (/^[A-Za-z0-9+/]+=*$/.test(raw) && raw.length > 100) {
-            this.previewUrl = `data:image/*;base64,${raw}`
-            return
-        }
-
-        // Absolute URL
-        try {
-            new URL(raw)
-            this.previewUrl = raw
-            return
-        } catch {
-            // Relative path
-            if (/^([./]|\/)/.test(raw)) {
-                this.previewUrl = raw
-                return
-            }
-        }
-
-        // Fallback
-        this.previewUrl = undefined
+        this.image = imageSource(this.inputData?.image, serializeSvg)
     }
 
     private async getModifier() {
@@ -158,33 +118,10 @@ export class WidgetOverlay extends LitElement {
         const containerRect = this.baseLayer.parentElement?.getBoundingClientRect()
         if (!containerRect) return
 
-        let intrinsicWidth: number | undefined
-        let intrinsicHeight: number | undefined
-
-        if (this.baseLayer instanceof HTMLImageElement) {
-            // For <img>
-            intrinsicWidth = this.baseLayer.naturalWidth
-            intrinsicHeight = this.baseLayer.naturalHeight
-        } else {
-            const innerSvg = this.baseLayer.querySelector('svg')
-
-            if (innerSvg) {
-                // For <svg>
-                const viewBox = innerSvg.viewBox.baseVal
-                if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
-                    intrinsicWidth = viewBox.width
-                    intrinsicHeight = viewBox.height
-                } else {
-                    // fallback to width/height attributes if set
-                    const widthAttr = this.baseLayer.getAttribute('width')
-                    const heightAttr = this.baseLayer.getAttribute('height')
-                    if (widthAttr && heightAttr) {
-                        intrinsicWidth = parseFloat(widthAttr)
-                        intrinsicHeight = parseFloat(heightAttr)
-                    }
-                }
-            }
-        }
+        // Inline SVG is scaled against its viewBox, as when it was drawn in place;
+        // every other image against its natural size.
+        const intrinsicWidth: number | undefined = this.image?.width ?? this.baseLayer.naturalWidth
+        const intrinsicHeight: number | undefined = this.image?.height ?? this.baseLayer.naturalHeight
 
         if (!intrinsicWidth || !intrinsicHeight) return
 
@@ -362,20 +299,6 @@ export class WidgetOverlay extends LitElement {
             box-sizing: border-box;
         }
 
-        .svg-wrapper {
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            position: relative;
-        }
-
-        .svg-wrapper svg {
-            width: 100%;
-            height: 100%;
-            display: block;
-            /* preserveAspectRatio inside SVG handles "contain"-like scaling */
-        }
-
         h3 {
             margin: 0;
             max-width: 300px;
@@ -426,7 +349,7 @@ export class WidgetOverlay extends LitElement {
     `
 
     render() {
-        const hasImage = !!this.inlineSvg || !!this.previewUrl
+        const hasImage = !!this.image
         return html`
             <div class="wrapper">
                 <h3 class="paging" ?active=${this.inputData?.title} style="color: ${this.themeTitleColor}">
@@ -442,17 +365,15 @@ export class WidgetOverlay extends LitElement {
 
                 <div class="paging no-data" ?active=${!hasImage}>No Image</div>
                 <div class="img-container paging" ?active="${hasImage}">
-                    ${this.inlineSvg
-                        ? html`<div id="base-layer" class="svg-wrapper">${unsafeSVG(this.inlineSvg)}</div>`
-                        : this.previewUrl
-                          ? html`<img
-                                id="base-layer"
-                                @load="${this.getModifier}"
-                                src="${this.previewUrl}"
-                                alt="Image Widget"
-                                style="object-fit: ${this.inputData?.stretchToFit ? 'fill' : 'contain'}"
-                            />`
-                          : ''}
+                    ${this.image
+                        ? html`<img
+                              id="base-layer"
+                              @load="${this.getModifier}"
+                              src="${this.image.src}"
+                              alt="Image Widget"
+                              style="object-fit: ${this.inputData?.stretchToFit ? 'fill' : 'contain'}"
+                          />`
+                        : ''}
                     ${repeat(
                         objects<Overlay>(this.inputData?.overlays),
                         // Unique even when layers share a name or have none: duplicate
