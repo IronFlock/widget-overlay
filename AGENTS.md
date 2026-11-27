@@ -81,7 +81,7 @@ The internal progress element (`src/linear-progress.ts`) is a separate Lit eleme
 
 ### Build output
 
-`vite.config.ts` builds a single ES module library entry (`src/widget-overlay.ts` -> `dist/widget-overlay.js`) with sourcemaps and a license banner. The published package (`files` in `package.json`) ships `dist/`, `src/`, and `thumbnail.png` (used by the platform's widget gallery).
+`vite.config.ts` builds a single ES module library entry (`src/widget-overlay.ts` -> `dist/widget-overlay.js`) with sourcemaps and a license banner. `lit` is external: studio's import map provides one copy for all widgets. The published package (`files` in `package.json`) ships `dist/`, `src/`, and `thumbnail.png` (used by the platform's widget gallery).
 
 ## `aiSelection` in `src/definition-schema.json`
 
