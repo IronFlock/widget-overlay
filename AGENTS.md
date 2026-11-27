@@ -43,14 +43,14 @@ and remaining work there when handing a task to another developer or agent.
 - `npm run watch` - `vite build --watch` only.
 - `just lint` — what the CI gate checks besides the build: regenerating the committed generated files (`npm run types`) changes nothing. `just build` = `npm run build`.
 - `just merge` / `just release-patch` (`release-minor`, `release-major`) — pull requests into `main` from a feature branch with everything committed: a no-release one, or a release one whose merge publishes to npm in CI (`.github/workflows/build-publish.yml`), then the release GitHub App tags the bare version and creates the GitHub release. Never `npm publish`, tag or edit the version by hand.
-- `npm run link` / `npm run unlink` - Local link/unlink against `../RESWARM/frontend` for in-platform testing.
+- `npm run link` / `npm run unlink` — Build and `npm link` this package into the studio checkout at `../../studio` (the host app, `~/git/ironflock/studio`), or put the published package back there. Only studio's appliance build (`build:appliance`) reads the widget from `node_modules`: its dev server (`npm run dev`) already aliases `widget-overlay` to this checkout's `dist/` and serves its `src/*.json`, so `npm run watch` here is enough for dev. Studio tracks both `package-lock.json` and `bun.lock` (its Dockerfile runs `bun install --frozen-lockfile`), and `unlink` reinstalls with npm only: run `bun install` in studio as well if that moved the version.
 - `npm test` - unit tests of `src/image-source.ts` (`test/*.test.mjs`, `node --test`; Node 24 loads the TypeScript source directly, so there is no test dependency). The CI gate skips unit tests (`skip: unit` in `.github/workflows/ci.yml`), so run them locally. No linter is configured.
 
 Node `>=24.9.0` and npm `>=10.0.2` are required (see `engines`).
 
 ## Architecture
 
-This repo produces a single Lit web component published as `@ironflock/widget-overlay`, consumed by the IronFlock/RESWARM platform. It renders a background image (raster, SVG file, inline SVG, data URL, or base64) and overlays positioned data pins on top.
+This repo produces a single Lit web component published as `@ironflock/widget-overlay`, consumed by IronFlock Studio, the board UI. It renders a background image (raster, SVG file, inline SVG, data URL, or base64) and overlays positioned data pins on top.
 
 ### Versioned custom element tag
 
